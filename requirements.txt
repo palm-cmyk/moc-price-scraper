@@ -1,3 +1,3 @@
 selenium==4.18.1
 beautifulsoup4==4.12.3
-firebase-admin==6.4.0ห
+firebase-admin==6.4.0
