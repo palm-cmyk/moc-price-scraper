@@ -304,16 +304,7 @@ def scrape_moc_daily_prices():
                 "scrape_version":       "1.1.0",
                 "items":                all_scraped_items
             }
-            ```
 
-            ---
-
-            **ทำแบบเร็วที่สุด — ใช้ VS Code Find & Replace:**
-            ```
-            Ctrl+H
-            Find:    →
-            Replace: (เว้นว่างไว้)
-            Replace All
 
             # บันทึกลงเครื่อง (เผื่อดูย้อนหลัง)
             # หมายเหตุ: json.dump บันทึก scraped_at เป็น string ได้ปกติ
