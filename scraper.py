@@ -293,16 +293,27 @@ def scrape_moc_daily_prices():
                 raise  # ทำให้ GitHub Actions mark job เป็น FAILED → ส่ง LINE alert
 
             # ── เตรียมแพ็คเกจข้อมูลเตรียมส่ง ─────────────────────────
-            now_utc = datetime.now(timezone.utc)  # 🆕 Firestore Timestamp จริง
+            # ✅ ใหม่ (ลบ → ออกทั้งหมด)
+            now_utc = datetime.now(timezone.utc)
 
             market_data = {
-                "updated_at":           timestamp_str,   # เก็บ string เดิมไว้ (ไม่แตะ)
-                "scraped_at":           now_utc,         # 🆕 Timestamp จริงสำหรับ Frontend
-                "official_update_date": official_update_date or "",  # 🆕 วันที่ MOC แยกออกมา
-                "item_count":           len(all_scraped_items),      # 🆕 นับจำนวนสินค้า
-                "scrape_version":       "1.1.0",                     # 🆕 version tracking
+                "updated_at":           timestamp_str,
+                "scraped_at":           now_utc,
+                "official_update_date": official_update_date or "",
+                "item_count":           len(all_scraped_items),
+                "scrape_version":       "1.1.0",
                 "items":                all_scraped_items
             }
+            ```
+
+            ---
+
+            **ทำแบบเร็วที่สุด — ใช้ VS Code Find & Replace:**
+            ```
+            Ctrl+H
+            Find:    →
+            Replace: (เว้นว่างไว้)
+            Replace All
 
             # บันทึกลงเครื่อง (เผื่อดูย้อนหลัง)
             # หมายเหตุ: json.dump บันทึก scraped_at เป็น string ได้ปกติ
