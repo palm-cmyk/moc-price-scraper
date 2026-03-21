@@ -2,7 +2,7 @@ import re
 import json
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from bs4 import BeautifulSoup
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
@@ -275,23 +275,75 @@ def scrape_moc_daily_prices():
                 item_info["start_month_price"] = s_month_price
             
             # เตรียมแพ็คเกจข้อมูลเตรียมส่ง
+            # ── 🛡️ Item Count Guard — ป้องกัน silent failure ──────────
+            try:
+                prev_doc = db.collection('market_data').document('latest').get()
+                if prev_doc.exists:
+                    prev_count = len(prev_doc.to_dict().get('items', {}))
+                    new_count  = len(all_scraped_items)
+                    drop_pct   = (prev_count - new_count) / max(prev_count, 1)
+                    if drop_pct > 0.20:
+                        raise Exception(
+                            f"🚨 จำนวนสินค้าหายไป {int(drop_pct*100)}%: "
+                            f"{prev_count} → {new_count} รายการ "
+                            f"(อาจเป็นเพราะ MOC เปลี่ยน Schema) — ยกเลิกการอัปโหลด"
+                        )
+            except Exception as guard_err:
+                print(str(guard_err))
+                raise  # ทำให้ GitHub Actions mark job เป็น FAILED → ส่ง LINE alert
+
+            # ── เตรียมแพ็คเกจข้อมูลเตรียมส่ง ─────────────────────────
+            now_utc = datetime.now(timezone.utc)  # 🆕 Firestore Timestamp จริง
+
             market_data = {
-                "updated_at": timestamp_str,
-                "items": all_scraped_items
+                "updated_at":           timestamp_str,   # เก็บ string เดิมไว้ (ไม่แตะ)
+                "scraped_at":           now_utc,         # 🆕 Timestamp จริงสำหรับ Frontend
+                "official_update_date": official_update_date or "",  # 🆕 วันที่ MOC แยกออกมา
+                "item_count":           len(all_scraped_items),      # 🆕 นับจำนวนสินค้า
+                "scrape_version":       "1.1.0",                     # 🆕 version tracking
+                "items":                all_scraped_items
             }
-            
+
             # บันทึกลงเครื่อง (เผื่อดูย้อนหลัง)
+            # หมายเหตุ: json.dump บันทึก scraped_at เป็น string ได้ปกติ
+            market_data_for_json = {**market_data, "scraped_at": now_utc.isoformat()}
             with open(CURRENT_PRICE_FILE, 'w', encoding='utf-8') as f:
-                json.dump(market_data, f, ensure_ascii=False, indent=4)
+                json.dump(market_data_for_json, f, ensure_ascii=False, indent=4)
 
             # อัปโหลดขึ้น Firebase
             print("🚀 กำลังอัปโหลดข้อมูลล่าสุด (พร้อมประวัติ) ขึ้น Firebase...")
             try:
                 doc_ref = db.collection('market_data').document('latest')
-                doc_ref.set(market_data)
-                print("✅ อัปโหลดขึ้น Firebase สำเร็จเรียบร้อย!! ข้อมูลสมบูรณ์ 100%")
+                doc_ref.set(market_data)  # Firestore เก็บ datetime object เป็น Timestamp อัตโนมัติ
+                print(f"✅ อัปโหลดขึ้น Firebase สำเร็จ! {len(all_scraped_items)} รายการ "
+                      f"| scraped_at: {now_utc.strftime('%H:%M UTC')}")
             except Exception as firebase_e:
                 print(f"❌ อัปโหลด Firebase ล้มเหลว: {firebase_e}")
+                raise  # 🆕 raise ให้ GitHub Actions รู้ว่า job พัง
+```
+
+---
+
+## สรุปสิ่งที่เปลี่ยน
+
+| จุด | เดิม | ใหม่ |
+|---|---|---|
+| `scraped_at` | ไม่มี | `datetime` object → Firestore Timestamp ✅ |
+| `updated_at` | string เดิม | **คงไว้** — ไม่แตะ backward compatibility |
+| Firebase write fail | `print` แล้วเงียบ | `raise` → GitHub Actions FAILED → LINE alert ✅ |
+| Item count drop | ไม่ตรวจ | ตรวจ drop >20% → หยุด + raise ✅ |
+| JSON local file | `datetime` object crash | แยก `market_data_for_json` ก่อน dump ✅ |
+
+---
+
+## ลำดับการ Deploy
+```
+วันนี้   →  แก้ scraper.py 2 จุดตามด้านบน
+วันนี้   →  เพิ่ม LINE_NOTIFY_TOKEN ใน GitHub Secrets
+วันนี้   →  กด workflow_dispatch รันทดสอบ
+ตรวจสอบ →  Firestore: market_data/latest ต้องมีฟิลด์ scraped_at เป็น Timestamp
+ตรวจสอบ →  LINE ได้รับข้อความ ✅ สำเร็จ หรือ 🚨 ล้มเหลว
+ถัดไป    →  ทำ Frontend freshness indicator (รอให้ scraper รันจริงอย่างน้อย 1 ครั้งก่อน)
                 
         else:
             print("\n⚠️ ไม่พบข้อมูลใดๆ เลยในวันนี้")
