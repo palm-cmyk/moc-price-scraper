@@ -8,7 +8,6 @@ from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 
-# นำเข้า Firebase Admin
 import firebase_admin
 from firebase_admin import credentials
 from firebase_admin import firestore
@@ -60,6 +59,78 @@ CATEGORY_PREFIX = {
     "ราคาขายส่งข้าวสารให้ร้านขายปลีก": "ws"
 }
 
+# ==========================================
+# Unit Normalization
+# ==========================================
+
+# Bulk unit rules: (pattern, divisor, normalized_unit)
+# More specific patterns first
+BULK_RULES = [
+    (r'3\s*กล่อง.*?10\s*กก',   30.0,    'บาท/กก.'),
+    (r'100\s*กก',               100.0,   'บาท/กก.'),
+    (r'15\s*กก',                15.0,    'บาท/กก.'),
+    (r'10\s*กก',                10.0,    'บาท/กก.'),
+    (r'ตัน',                    1000.0,  'บาท/กก.'),
+]
+
+# Messy unit string cleanup (no price change)
+UNIT_CLEAN = {
+    'บาท/ กก.':   'บาท/กก.',
+    'บาท /กก.':   'บาท/กก.',
+    'บาท/ กก':    'บาท/กก.',
+    'บาท/กก':     'บาท/กก.',
+    'บาท/ 10 กำ': 'บาท/10กำ',
+    'บาท/10 กำ':  'บาท/10กำ',
+    'บาท/ กำ':    'บาท/กำ',
+    '-':           'บาท/กก.',
+    '':            'บาท/กก.',
+}
+
+
+def normalize_item(item_id: str, item: dict) -> dict:
+    result = dict(item)
+    unit = (item.get('unit') or '').strip()
+
+    # Step 1: Bulk pricing rules - divide price and normalize unit
+    for pattern, divisor, new_unit in BULK_RULES:
+        if re.search(pattern, unit, re.IGNORECASE):
+            for field in ('price', 'min_price', 'max_price',
+                          'start_month_price', 'start_year_price'):
+                val = result.get(field)
+                if val:
+                    result[field] = round(val / divisor, 4)
+            result['unit'] = new_unit
+            return result
+
+    # Step 2: Clean messy unit strings
+    if unit in UNIT_CLEAN:
+        result['unit'] = UNIT_CLEAN[unit]
+
+    return result
+
+
+def normalize_all_items(items: dict) -> dict:
+    fixed = {}
+    bulk_count = 0
+    unit_count = 0
+
+    for item_id, item in items.items():
+        original_unit = (item.get('unit') or '').strip()
+        result = normalize_item(item_id, item)
+        fixed[item_id] = result
+
+        if result.get('price') != item.get('price'):
+            bulk_count += 1
+        elif result.get('unit') != original_unit:
+            unit_count += 1
+
+    print(f"Unit normalization: {bulk_count} bulk price fixes, {unit_count} unit string fixes")
+    return fixed
+
+
+# ==========================================
+# Helper functions
+# ==========================================
 
 def load_mapping():
     if os.path.exists(MAPPING_FILE):
@@ -87,12 +158,15 @@ def get_driver():
     return webdriver.Chrome(options=options)
 
 
+# ==========================================
+# Main scraper
+# ==========================================
+
 def scrape_moc_daily_prices():
     print(f"[{datetime.now().strftime('%H:%M:%S')}] เริ่มภารกิจกวาดราคา (พร้อมอัปโหลดขึ้น Cloud)...")
 
     item_mapping = load_mapping()
     all_scraped_items = {}
-
     official_update_date = None
     driver = get_driver()
 
@@ -260,6 +334,11 @@ def scrape_moc_daily_prices():
         # ==========================================
         if all_scraped_items:
             save_mapping(item_mapping)
+
+            # ── NORMALIZE UNITS ── เกิดขึ้นก่อน upload ทุกครั้ง
+            print("กำลัง normalize units...")
+            all_scraped_items = normalize_all_items(all_scraped_items)
+
             final_date_str = (
                 f"ข้อมูล ณ วันที่ {official_update_date}"
                 if official_update_date
@@ -323,7 +402,7 @@ def scrape_moc_daily_prices():
                 "scraped_at": now_utc,
                 "official_update_date": official_update_date or "",
                 "item_count": len(all_scraped_items),
-                "scrape_version": "1.1.0",
+                "scrape_version": "1.2.0",
                 "items": all_scraped_items
             }
 
