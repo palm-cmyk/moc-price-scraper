@@ -215,7 +215,11 @@ def scrape_moc_daily_prices():
                             if date_match:
                                 official_update_date = date_match.group(1)
 
-                        if "ราคาส่ง" in page_text or "ขายส่ง" in page_text:
+                        # ผลไม้ ผักสด เนื้อสัตว์ — iframe1=ปลีก iframe2=ส่ง เสมอ
+                        RETAIL_FIRST_CATEGORIES = {'ผลไม้', 'ผักสด', 'เนื้อสัตว์'}
+                        if category_name in RETAIL_FIRST_CATEGORIES:
+                            table_type = "ราคาปลีก" if iframe_counter == 1 else "ราคาส่ง"
+                        elif "ราคาส่ง" in page_text or "ขายส่ง" in page_text:
                             table_type = "ราคาส่ง"
                         elif "ราคาปลีก" in page_text or "ขายปลีก" in page_text:
                             table_type = "ราคาปลีก"
@@ -276,7 +280,9 @@ def scrape_moc_daily_prices():
                                         count_in_cat = sum(1 for v in item_mapping.values() if v.startswith(prefix))
                                         item_mapping[item_name] = f"{prefix}{count_in_cat + 1}"
 
-                                    item_id = item_mapping[item_name]
+                                    item_id_base = item_mapping[item_name]
+                                    # ราคาปลีกใช้ suffix _r เพื่อไม่ให้ทับราคาส่ง
+                                    item_id = f"{item_id_base}_r" if table_type == "ราคาปลีก" else item_id_base
                                     all_scraped_items[item_id] = {
                                         "name": item_name,
                                         "price": avg_price,
