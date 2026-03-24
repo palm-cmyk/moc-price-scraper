@@ -33,7 +33,6 @@ jobs:
       id: run_scraper
       run: python scraper.py
 
-    # ── Verify Firebase actually wrote today's data ──────────────────
     - name: Verify Firebase Write
       id: verify_firebase
       env:
@@ -42,8 +41,8 @@ jobs:
         python3 - <<'EOF'
         import firebase_admin
         from firebase_admin import credentials, firestore
-        from datetime import datetime, timezone, timedelta
-        import json, sys, os
+        from datetime import datetime, timezone
+        import sys
 
         cred = credentials.Certificate('firebase-key.json')
         firebase_admin.initialize_app(cred)
@@ -51,101 +50,40 @@ jobs:
 
         doc = db.collection('market_data').document('latest').get()
         if not doc.exists:
-            print("FAIL: market_data/latest document does not exist")
+            print("FAIL: market_data/latest does not exist")
             sys.exit(1)
 
         data = doc.to_dict()
         scraped_at = data.get('scraped_at')
+        item_count = len(data.get('items', {}))
 
         if scraped_at is None:
-            print("WARN: scraped_at field missing - old data format, checking updated_at string")
-            updated_at = data.get('updated_at', '')
-            print(f"updated_at: {updated_at}")
-            item_count = len(data.get('items', {}))
-            print(f"Item count: {item_count}")
-            if item_count > 100:
-                print("OK: Data present with sufficient items")
-                sys.exit(0)
-            else:
-                print(f"FAIL: Only {item_count} items found")
-                sys.exit(1)
+            print(f"WARN: no scraped_at - item count: {item_count}")
+            sys.exit(0 if item_count > 100 else 1)
 
-        # scraped_at is a Firestore Timestamp
-        if hasattr(scraped_at, 'ToDatetime'):
+        try:
             scraped_dt = scraped_at.ToDatetime().replace(tzinfo=timezone.utc)
-        else:
+        except Exception:
             scraped_dt = scraped_at
 
         now_utc = datetime.now(timezone.utc)
         age_hours = (now_utc - scraped_dt).total_seconds() / 3600
 
-        item_count = len(data.get('items', {}))
         print(f"scraped_at: {scraped_dt.strftime('%Y-%m-%d %H:%M UTC')}")
-        print(f"Age: {age_hours:.1f} hours")
-        print(f"Item count: {item_count}")
+        print(f"Age: {age_hours:.1f} hours | Items: {item_count}")
 
         if age_hours > 26:
-            print(f"FAIL: Data is {age_hours:.1f} hours old - stale data in Firestore")
+            print(f"FAIL: stale data ({age_hours:.1f}h old)")
             sys.exit(1)
-
         if item_count < 100:
-            print(f"FAIL: Only {item_count} items - incomplete write")
+            print(f"FAIL: only {item_count} items")
             sys.exit(1)
 
         print("OK: Firebase data is fresh and complete")
         sys.exit(0)
         EOF
 
-    # ── LINE Notify — success ────────────────────────────────────────
-    - name: Notify LINE on Success
-      if: success()
-      env:
-        LINE_TOKEN: ${{ secrets.LINE_NOTIFY_TOKEN }}
-      run: |
-        TIMESTAMP=$(TZ='Asia/Bangkok' date '+%d/%m/%Y %H:%M')
-        for i in 1 2 3; do
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-            --max-time 15 \
-            --retry 2 \
-            -X POST https://notify-api.line.me/api/notify \
-            -H "Authorization: Bearer $LINE_TOKEN" \
-            -F "message=COGS Manager scraper success ${TIMESTAMP}")
-          echo "LINE response: $STATUS"
-          if [ "$STATUS" = "200" ]; then
-            echo "LINE notification sent"
-            exit 0
-          fi
-          echo "Retry $i failed with status $STATUS"
-          sleep 5
-        done
-        echo "LINE notification failed after 3 retries - non-fatal"
-        exit 0
-
-    # ── LINE Notify — failure ────────────────────────────────────────
-    - name: Notify LINE on Failure
-      if: failure()
-      env:
-        LINE_TOKEN: ${{ secrets.LINE_NOTIFY_TOKEN }}
-      run: |
-        TIMESTAMP=$(TZ='Asia/Bangkok' date '+%d/%m/%Y %H:%M')
-        for i in 1 2 3; do
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-            --max-time 15 \
-            --retry 2 \
-            -X POST https://notify-api.line.me/api/notify \
-            -H "Authorization: Bearer $LINE_TOKEN" \
-            -F "message=SCRAPER FAILED ${TIMESTAMP} check GitHub Actions immediately")
-          echo "LINE response: $STATUS"
-          if [ "$STATUS" = "200" ]; then
-            exit 0
-          fi
-          sleep 5
-        done
-        echo "LINE notification failed - falling back to GitHub Issue"
-        exit 0
-
-    # ── Backup: GitHub Issue on failure ─────────────────────────────
-    - name: Create GitHub Issue on Failure (backup alert)
+    - name: Create GitHub Issue on Failure
       if: failure()
       uses: actions/github-script@v6
       with:
@@ -163,11 +101,9 @@ jobs:
               `**Run:** ${runUrl}`,
               '',
               '### Immediate Actions',
-              '1. Check Firebase Console - market_data - latest - scraped_at field',
-              '2. If data is stale - trigger manual re-run via workflow_dispatch',
-              '3. Check GitHub Actions log for root cause',
-              '',
-              '*This issue was auto-created as backup alert when LINE Notify failed.*'
+              '1. Check Firebase - market_data - latest - scraped_at field',
+              '2. If stale - trigger manual re-run via workflow_dispatch',
+              '3. Check Actions log for root cause',
             ].join('\n'),
             labels: ['bug', 'urgent']
           });
