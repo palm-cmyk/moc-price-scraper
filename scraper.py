@@ -365,7 +365,9 @@ def scrape_moc_daily_prices():
                 year_data = all_scraped_items
                 print("สร้างฐานข้อมูลราคาต้นปีใหม่เรียบร้อย!")
             else:
-                year_data = year_doc.to_dict().get("items", {})
+                raw_year = year_doc.to_dict().get("items", {})
+                # normalize history ก่อนใช้ เผื่อเป็นข้อมูลเก่าก่อน normalize
+                year_data = {k: normalize_item(k, v) for k, v in raw_year.items()}
 
             # 2. เช็คราคาต้นเดือน
             month_doc = history_ref.document(month_doc_id).get()
@@ -374,7 +376,9 @@ def scrape_moc_daily_prices():
                 month_data = all_scraped_items
                 print("สร้างฐานข้อมูลราคาต้นเดือนใหม่เรียบร้อย!")
             else:
-                month_data = month_doc.to_dict().get("items", {})
+                raw_month = month_doc.to_dict().get("items", {})
+                # normalize history ก่อนใช้ เผื่อเป็นข้อมูลเก่าก่อน normalize
+                month_data = {k: normalize_item(k, v) for k, v in raw_month.items()}
 
             # 3. รวมข้อมูลประวัติราคาเข้ากับราคาวันนี้
             for item_id, item_info in all_scraped_items.items():
