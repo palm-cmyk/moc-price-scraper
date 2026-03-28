@@ -297,6 +297,9 @@ def scrape_moc_daily_prices():
                                 avg_match = re.search(r'\d+\.?\d*', avg_price_text.replace(',', ''))
 
                                 if item_name and avg_match and "รายการ" not in item_name:
+                                    # Rename before mapping lookup
+                                    item_name = NAME_RENAME.get(item_name, item_name)
+
                                     if not current_first_item:
                                         current_first_item = item_name
 
