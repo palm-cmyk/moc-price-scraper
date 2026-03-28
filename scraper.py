@@ -526,13 +526,18 @@ def scrape_moc_daily_prices():
             REQUIRED_PREFIXES = {'m', 'f', 'fr', 'v', 'p', 'o', 'a', 'ws'}
             scraped_prefixes = set()
             for item_id in all_scraped_items:
-                prefix = ''.join(c for c in item_id if not c.isdigit()).rstrip('_r')
-                scraped_prefixes.add(prefix)
+                # strip _r suffix first, then strip digits from right
+                base = item_id.rstrip('_r').rstrip('0123456789')
+                scraped_prefixes.add(base)
             missing_cats = REQUIRED_PREFIXES - scraped_prefixes
             if missing_cats:
-                raise Exception(
-                    f"หมวดหมู่หายไปทั้งหมด: {missing_cats} — ยกเลิกการอัปโหลด"
-                )
+                # ถ้าหายมากกว่า 3 หมวด = น่าสงสัย ยกเลิก
+                if len(missing_cats) > 3:
+                    raise Exception(
+                        f"หมวดหมู่หายไปทั้งหมด: {missing_cats} — ยกเลิกการอัปโหลด"
+                    )
+                # หายแค่ 1-3 หมวด = MOC timeout เป็นปกติ อัปโหลดต่อ
+                print(f"⚠️  หมวดที่ดึงไม่ได้: {missing_cats} — อัปโหลดหมวดที่เหลือต่อไป")
 
             # ==========================================
             # เตรียม payload และอัปโหลด
