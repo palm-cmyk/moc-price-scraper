@@ -229,7 +229,7 @@ def scrape_moc_daily_prices():
                 continue
 
             # พืชน้ำมันฯ มี iframe โหลดช้า — รอนานขึ้น
-            wait_time = 25 if category_name == "พืชน้ำมันและน้ำมันพืช" else 15
+            wait_time = 40 if category_name == "พืชน้ำมันและน้ำมันพืช" else 10
             time.sleep(wait_time)
 
             iframes = driver.find_elements(By.TAG_NAME, "iframe")
