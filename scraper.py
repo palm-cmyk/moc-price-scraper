@@ -245,8 +245,8 @@ def scrape_moc_daily_prices():
                         time.sleep(2)
                         driver.switch_to.frame(frame)
                         iframe_counter += 1
-                        oil_extra = 20 if (category_name == "พืชน้ำมันและน้ำมันพืช" and iframe_counter == 2) else 0
-                        time.sleep(10 + oil_extra)
+                        wait = 30 if category_name == "พืชน้ำมันและน้ำมันพืช" else 10
+                        time.sleep(wait)
 
                         soup = BeautifulSoup(driver.page_source, 'html.parser')
                         page_text = soup.get_text()
