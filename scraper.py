@@ -292,6 +292,8 @@ def scrape_moc_daily_prices():
 
                         for row in rows:
                             cols = row.find_all(['td', 'th'])
+                            if category_name == "พืชน้ำมันและน้ำมันพืช" and iframe_counter in [1,2]:
+                                print(f"    cols={len(cols)}: {[c.get_text(strip=True)[:20] for c in cols[:6]]}")
                             if len(cols) >= 4:
                                 item_name = cols[1].get_text(" ", strip=True)
 
