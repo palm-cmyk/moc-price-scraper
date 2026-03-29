@@ -272,6 +272,8 @@ def scrape_moc_daily_prices():
                         soup = BeautifulSoup(driver.page_source, 'html.parser')
 
                     rows = soup.find_all('tr')
+                    all_text_preview = soup.get_text()[:200].replace('\n', ' ').strip()
+                    print(f"  iframe {iframe_counter}: rows={len(rows)}, type={table_type}, text={all_text_preview}")
                     if len(rows) < 2:
                         print(f"  iframe {iframe_counter}: ไม่มีตาราง ข้าม")
                         continue
