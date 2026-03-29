@@ -426,12 +426,25 @@ def scrape_moc_daily_prices():
 
                             for row in rows:
                                 cols = row.find_all(['td', 'th'])
-                                if len(cols) >= 4:
-                                    item_name = cols[1].get_text(" ", strip=True)
+
+                                # 🟢 เพิ่มตัวทด offset เพื่อแก้ปัญหาตารางราคาส่งที่มีปุ่ม [+] แทรกคอลัมน์แรก
+                                offset = 0
+                                if len(cols) >= 5 and cols[1].get_text(strip=True).isdigit():
+                                    offset = 1
+                                
+                                if len(cols) >= 4 + offset:
+                                    item_name = cols[1 + offset].get_text(" ", strip=True)
                                     item_name = NAME_RENAME.get(item_name, item_name)
-                                    avg_price_text = cols[3].get_text(strip=True) if len(cols) > 3 else ""
-                                    range_text = cols[2].get_text(strip=True)
-                                    unit_text = cols[4].get_text(strip=True) if len(cols) > 4 else "หน่วย"
+                                    range_text = cols[2 + offset].get_text(strip=True)
+                                    
+                                    # เช็คเพื่อรองรับกรณีที่บางตารางไม่มีคอลัมน์ราคาเฉลี่ย
+                                    if len(cols) > 3 + offset:
+                                        avg_price_text = cols[3 + offset].get_text(strip=True)
+                                    else:
+                                        avg_price_text = range_text
+                                        
+                                    unit_text = cols[4 + offset].get_text(strip=True) if len(cols) > 4 + offset else "หน่วย"
+                                    
                                     avg_match = re.search(r'\d+\.?\d*', avg_price_text.replace(',', ''))
                                     if item_name and avg_match and "รายการ" not in item_name:
                                         avg_price = float(avg_match.group())
