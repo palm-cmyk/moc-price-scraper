@@ -296,7 +296,9 @@ def scrape_moc_daily_prices():
                                 item_name = cols[1].get_text(" ", strip=True)
 
                                 range_text = cols[2].get_text(strip=True)
-                                avg_price_text = cols[3].get_text(strip=True) if len(cols) > 3 else range_text
+                                avg_price_text = cols[3].get_text(strip=True) if len(cols) > 3 else ''
+                                if not re.search(r'\d', avg_price_text):
+                                    avg_price_text = range_text
                                 unit_text = cols[4].get_text(strip=True) if len(cols) > 4 else "หน่วย"
 
                                 avg_match = re.search(r'\d+\.?\d*', avg_price_text.replace(',', ''))
