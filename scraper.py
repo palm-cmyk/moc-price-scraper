@@ -273,6 +273,7 @@ def scrape_moc_daily_prices():
 
                     rows = soup.find_all('tr')
                     if len(rows) < 2:
+                        print(f"  iframe {iframe_counter}: ไม่มีตาราง ข้าม")
                         continue
 
                     page_number = 1
