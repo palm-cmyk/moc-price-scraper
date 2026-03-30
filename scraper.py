@@ -167,7 +167,7 @@ def save_mapping(mapping_data):
 def get_driver():
     options = Options()
     options.add_argument('--headless=new')
-    options.add_argument('--window-size=2560,1440') 
+    options.add_argument('--window-size=1920,1080')
     options.add_argument('--no-sandbox')
     options.add_argument('--disable-dev-shm-usage')
     options.add_argument('--disable-gpu')
@@ -175,10 +175,7 @@ def get_driver():
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_experimental_option('useAutomationExtension', False)
     options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
-    
-    driver = webdriver.Chrome(options=options)
-    driver.set_window_size(2560, 1440)
-    return driver
+    return webdriver.Chrome(options=options)
 
 # ==========================================
 # Main scraper
@@ -203,7 +200,7 @@ def scrape_moc_daily_prices():
                 driver = get_driver()
 
             print(f"\n[{i+1}/{len(links)}] กำลังโหลดหมวดหมู่: {category_name}...")
-
+            
             cat_retail_count = 0
             cat_wholesale_count = 0
 
@@ -233,6 +230,10 @@ def scrape_moc_daily_prices():
                         iframe_counter += 1
                         wait = 30 if category_name == "พืชน้ำมันและน้ำมันพืช" else 10
                         time.sleep(wait)
+
+                        # 🟢 ไพ่ตายแก้ตารางหด: สั่งทำลาย DataTables ทิ้ง เพื่อคืนชีพตาราง HTML ตัวเต็ม
+                        driver.execute_script("try { $('table').DataTable().destroy(); } catch(e) {}")
+                        time.sleep(2) # รอให้ตารางกางออก
 
                         soup = BeautifulSoup(driver.page_source, 'html.parser')
                         page_text = soup.get_text()
@@ -267,6 +268,10 @@ def scrape_moc_daily_prices():
                     while True:
                         if page_number > 1:
                             time.sleep(4)
+                            # ทุกครั้งที่เปลี่ยนหน้า ต้องทำลายตารางใหม่
+                            if frame is not None:
+                                driver.execute_script("try { $('table').DataTable().destroy(); } catch(e) {}")
+                                time.sleep(2)
                             soup = BeautifulSoup(driver.page_source, 'html.parser')
                             rows = soup.find_all('tr')
 
@@ -275,110 +280,60 @@ def scrape_moc_daily_prices():
 
                         for row in rows:
                             cols = row.find_all(['td', 'th'])
-                            if not cols:
-                                continue
                             
-                            first_col_text = cols[0].get_text(strip=True)
-                            if "ลำดับ" in first_col_text or "รายการ" in first_col_text:
-                                continue
+                            # 🟢 โค้ดดึงข้อมูลแบบดั้งเดิมของคุณ (ไม่ต้องใช้ offset แผน B แล้ว)
+                            if len(cols) >= 4:
+                                item_name = cols[1].get_text(" ", strip=True)
+                                range_text = cols[2].get_text(strip=True)
+                                avg_price_text = cols[3].get_text(strip=True) if len(cols) > 3 else range_text
+                                unit_text = cols[4].get_text(strip=True) if len(cols) > 4 else "หน่วย"
 
-                            offset = 0
-                            if len(cols) >= 5 and not first_col_text.isdigit():
-                                offset = 1
-                            elif len(cols) >= 3 and not first_col_text.isdigit() and cols[1].get_text(strip=True).isdigit():
-                                offset = 1
-                                
-                            is_valid = False # 🟢 ตัวแปรสำหรับเช็คว่าโค้ดหลักทำงานสำเร็จไหม
+                                avg_match = re.search(r'\d+\.?\d*', avg_price_text.replace(',', ''))
 
-                            # ===============================================
-                            # 🟢 แผน A: โค้ดหลักดั้งเดิมของคุณ (ไม่มีการเปลี่ยนแปลง)
-                            # ===============================================
-                            if len(cols) >= 3 + offset:
-                                item_name = cols[1 + offset].get_text(" ", strip=True)
-                                range_text = cols[2 + offset].get_text(strip=True)
-                                
-                                if item_name and "รายการ" not in item_name:
+                                if item_name and avg_match and "รายการ" not in item_name:
                                     item_name = NAME_RENAME.get(item_name, item_name)
 
+                                    if not current_first_item:
+                                        current_first_item = item_name
+
+                                    avg_price = float(avg_match.group())
+
+                                    min_price = avg_price
+                                    max_price = avg_price
                                     range_numbers = re.findall(r'\d+\.?\d*', range_text.replace(',', ''))
-                                    if range_numbers:
+
+                                    if len(range_numbers) >= 2:
                                         min_price = float(range_numbers[0])
-                                        max_price = float(range_numbers[1]) if len(range_numbers) >= 2 else min_price
+                                        max_price = float(range_numbers[1])
+                                    elif len(range_numbers) == 1:
+                                        min_price = float(range_numbers[0])
+                                        max_price = float(range_numbers[0])
 
-                                        if len(cols) > 3 + offset:
-                                            avg_price_text = cols[3 + offset].get_text(strip=True)
-                                            avg_match = re.search(r'\d+\.?\d*', avg_price_text.replace(',', ''))
-                                            
-                                            if avg_match and "-" not in avg_price_text:
-                                                avg_price = float(avg_match.group())
-                                            else:
-                                                avg_price = (min_price + max_price) / 2.0
-                                        else:
-                                            avg_price = (min_price + max_price) / 2.0
+                                    if item_name not in item_mapping:
+                                        prefix = CATEGORY_PREFIX.get(category_name, "x")
+                                        count_in_cat = sum(1 for v in item_mapping.values() if v.startswith(prefix))
+                                        item_mapping[item_name] = f"{prefix}{count_in_cat + 1}"
 
-                                        unit_text = cols[4 + offset].get_text(strip=True) if len(cols) > 4 + offset else "หน่วย"
-                                        is_valid = True
-
-                            # ===============================================
-                            # 🟢 แผน B: กู้ชีพ! (ทำงานเฉพาะเวลา แผน A ล้มเหลว เช่นตารางมีแค่ 2 คอลัมน์)
-                            # ===============================================
-                            if not is_valid and len(cols) > 0:
-                                row_text = row.get_text(" ", strip=True)
-                                row_text = re.sub(r'^\+?\s*\d+\s+', '', row_text).strip()
-                                
-                                price_match = re.search(r'(\d{1,3}(?:,\d{3})*\.\d{2})\s*-\s*(\d{1,3}(?:,\d{3})*\.\d{2})', row_text)
-                                if price_match:
-                                    item_name = row_text[:price_match.start()].strip()
-                                    if item_name and "รายการ" not in item_name:
-                                        item_name = NAME_RENAME.get(item_name, item_name)
-                                        
-                                        min_price = float(price_match.group(1).replace(',', ''))
-                                        max_price = float(price_match.group(2).replace(',', ''))
-                                        
-                                        remainder = row_text[price_match.end():].strip()
-                                        avg_price_match = re.search(r'\d{1,3}(?:,\d{3})*\.\d{2}', remainder)
-                                        
-                                        if avg_price_match and "-" not in remainder:
-                                            avg_price = float(avg_price_match.group().replace(',', ''))
-                                            unit_text = remainder[avg_price_match.end():].strip() or "หน่วย"
-                                        else:
-                                            avg_price = (min_price + max_price) / 2.0
-                                            unit_text = remainder.strip() or "หน่วย"
-                                            
-                                        is_valid = True
-
-                            # ===============================================
-                            # 💾 บันทึกข้อมูล ถ้าระบบดึงสำเร็จ (ไม่ว่าจะมาจากแผน A หรือแผน B)
-                            # ===============================================
-                            if is_valid:
-                                if not current_first_item:
-                                    current_first_item = item_name
-
-                                if item_name not in item_mapping:
-                                    prefix = CATEGORY_PREFIX.get(category_name, "x")
-                                    count_in_cat = sum(1 for v in item_mapping.values() if v.startswith(prefix))
-                                    item_mapping[item_name] = f"{prefix}{count_in_cat + 1}"
-
-                                item_id_base = item_mapping[item_name]
-                                item_id = f"{item_id_base}_r" if table_type == "ราคาปลีก" else item_id_base
-                                
-                                all_scraped_items[item_id] = {
-                                    "name": item_name,
-                                    "price": avg_price,
-                                    "min_price": min_price,
-                                    "max_price": max_price,
-                                    "unit": unit_text,
-                                    "category": category_name,
-                                    "type": table_type
-                                }
-                                
-                                if table_type == "ราคาปลีก":
-                                    cat_retail_count += 1
-                                else:
-                                    cat_wholesale_count += 1
+                                    item_id_base = item_mapping[item_name]
+                                    item_id = f"{item_id_base}_r" if table_type == "ราคาปลีก" else item_id_base
                                     
-                                found_in_category = True
-                                has_data = True
+                                    all_scraped_items[item_id] = {
+                                        "name": item_name,
+                                        "price": avg_price,
+                                        "min_price": min_price,
+                                        "max_price": max_price,
+                                        "unit": unit_text,
+                                        "category": category_name,
+                                        "type": table_type
+                                    }
+                                    
+                                    if table_type == "ราคาปลีก":
+                                        cat_retail_count += 1
+                                    else:
+                                        cat_wholesale_count += 1
+                                        
+                                    found_in_category = True
+                                    has_data = True
 
                         if current_first_item == previous_first_item or not has_data:
                             break
@@ -443,6 +398,11 @@ def scrape_moc_daily_prices():
                                 driver.switch_to.frame(frame)
                                 iframe_counter += 1
                                 time.sleep(10)
+                                
+                                # 🟢 ทำลาย DataTables ในรอบ Retry ด้วย
+                                driver.execute_script("try { $('table').DataTable().destroy(); } catch(e) {}")
+                                time.sleep(2)
+                                
                                 soup = BeautifulSoup(driver.page_source, 'html.parser')
                                 page_text = soup.get_text()
                                 RETAIL_FIRST_CATEGORIES = {'ผลไม้', 'ผักสด', 'เนื้อสัตว์'}
@@ -465,101 +425,58 @@ def scrape_moc_daily_prices():
 
                             for row in rows:
                                 cols = row.find_all(['td', 'th'])
-                                if not cols:
-                                    continue
                                 
-                                first_col_text = cols[0].get_text(strip=True)
-                                if "ลำดับ" in first_col_text or "รายการ" in first_col_text:
-                                    continue
+                                if len(cols) >= 4:
+                                    item_name = cols[1].get_text(" ", strip=True)
+                                    range_text = cols[2].get_text(strip=True)
+                                    avg_price_text = cols[3].get_text(strip=True) if len(cols) > 3 else range_text
+                                    unit_text = cols[4].get_text(strip=True) if len(cols) > 4 else "หน่วย"
 
-                                offset = 0
-                                if len(cols) >= 5 and not first_col_text.isdigit():
-                                    offset = 1
-                                elif len(cols) >= 3 and not first_col_text.isdigit() and cols[1].get_text(strip=True).isdigit():
-                                    offset = 1
-                                    
-                                is_valid = False
+                                    avg_match = re.search(r'\d+\.?\d*', avg_price_text.replace(',', ''))
 
-                                if len(cols) >= 3 + offset:
-                                    item_name = cols[1 + offset].get_text(" ", strip=True)
-                                    range_text = cols[2 + offset].get_text(strip=True)
-                                    
-                                    if item_name and "รายการ" not in item_name:
+                                    if item_name and avg_match and "รายการ" not in item_name:
                                         item_name = NAME_RENAME.get(item_name, item_name)
 
+                                        if not current_first_item:
+                                            current_first_item = item_name
+
+                                        avg_price = float(avg_match.group())
+
+                                        min_price = avg_price
+                                        max_price = avg_price
                                         range_numbers = re.findall(r'\d+\.?\d*', range_text.replace(',', ''))
-                                        if range_numbers:
+
+                                        if len(range_numbers) >= 2:
                                             min_price = float(range_numbers[0])
-                                            max_price = float(range_numbers[1]) if len(range_numbers) >= 2 else min_price
+                                            max_price = float(range_numbers[1])
+                                        elif len(range_numbers) == 1:
+                                            min_price = float(range_numbers[0])
+                                            max_price = float(range_numbers[0])
 
-                                            if len(cols) > 3 + offset:
-                                                avg_price_text = cols[3 + offset].get_text(strip=True)
-                                                avg_match = re.search(r'\d+\.?\d*', avg_price_text.replace(',', ''))
-                                                
-                                                if avg_match and "-" not in avg_price_text:
-                                                    avg_price = float(avg_match.group())
-                                                else:
-                                                    avg_price = (min_price + max_price) / 2.0
-                                            else:
-                                                avg_price = (min_price + max_price) / 2.0
+                                        if item_name not in item_mapping:
+                                            prefix = CATEGORY_PREFIX.get(category_name, "x")
+                                            count_in_cat = sum(1 for v in item_mapping.values() if v.startswith(prefix))
+                                            item_mapping[item_name] = f"{prefix}{count_in_cat + 1}"
 
-                                            unit_text = cols[4 + offset].get_text(strip=True) if len(cols) > 4 + offset else "หน่วย"
-                                            is_valid = True
-
-                                if not is_valid and len(cols) > 0:
-                                    row_text = row.get_text(" ", strip=True)
-                                    row_text = re.sub(r'^\+?\s*\d+\s+', '', row_text).strip()
-                                    
-                                    price_match = re.search(r'(\d{1,3}(?:,\d{3})*\.\d{2})\s*-\s*(\d{1,3}(?:,\d{3})*\.\d{2})', row_text)
-                                    if price_match:
-                                        item_name = row_text[:price_match.start()].strip()
-                                        if item_name and "รายการ" not in item_name:
-                                            item_name = NAME_RENAME.get(item_name, item_name)
-                                            
-                                            min_price = float(price_match.group(1).replace(',', ''))
-                                            max_price = float(price_match.group(2).replace(',', ''))
-                                            
-                                            remainder = row_text[price_match.end():].strip()
-                                            avg_price_match = re.search(r'\d{1,3}(?:,\d{3})*\.\d{2}', remainder)
-                                            
-                                            if avg_price_match and "-" not in remainder:
-                                                avg_price = float(avg_price_match.group().replace(',', ''))
-                                                unit_text = remainder[avg_price_match.end():].strip() or "หน่วย"
-                                            else:
-                                                avg_price = (min_price + max_price) / 2.0
-                                                unit_text = remainder.strip() or "หน่วย"
-                                                
-                                            is_valid = True
-
-                                if is_valid:
-                                    if not current_first_item:
-                                        current_first_item = item_name
-
-                                    if item_name not in item_mapping:
-                                        prefix = CATEGORY_PREFIX.get(category_name, "x")
-                                        count_in_cat = sum(1 for v in item_mapping.values() if v.startswith(prefix))
-                                        item_mapping[item_name] = f"{prefix}{count_in_cat + 1}"
-
-                                    item_id_base = item_mapping[item_name]
-                                    item_id = f"{item_id_base}_r" if table_type == "ราคาปลีก" else item_id_base
-                                    
-                                    all_scraped_items[item_id] = {
-                                        "name": item_name,
-                                        "price": avg_price,
-                                        "min_price": min_price,
-                                        "max_price": max_price,
-                                        "unit": unit_text,
-                                        "category": category_name,
-                                        "type": table_type
-                                    }
-                                    
-                                    if table_type == "ราคาปลีก":
-                                        cat_retail_count += 1
-                                    else:
-                                        cat_wholesale_count += 1
+                                        item_id_base = item_mapping[item_name]
+                                        item_id = f"{item_id_base}_r" if table_type == "ราคาปลีก" else item_id_base
                                         
-                                    found_in_category = True
-                                    has_data = True
+                                        all_scraped_items[item_id] = {
+                                            "name": item_name,
+                                            "price": avg_price,
+                                            "min_price": min_price,
+                                            "max_price": max_price,
+                                            "unit": unit_text,
+                                            "category": category_name,
+                                            "type": table_type
+                                        }
+                                        
+                                        if table_type == "ราคาปลีก":
+                                            cat_retail_count += 1
+                                        else:
+                                            cat_wholesale_count += 1
+                                            
+                                        found_in_category = True
 
                         except Exception:
                             continue
