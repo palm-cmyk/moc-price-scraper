@@ -167,7 +167,8 @@ def save_mapping(mapping_data):
 def get_driver():
     options = Options()
     options.add_argument('--headless=new')
-    options.add_argument('--window-size=1920,1080')
+    options.add_argument('--window-size=3840,2160') 
+    options.add_argument('--force-device-scale-factor=0.5')
     options.add_argument('--no-sandbox')
     options.add_argument('--disable-dev-shm-usage')
     options.add_argument('--disable-gpu')
@@ -175,7 +176,9 @@ def get_driver():
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_experimental_option('useAutomationExtension', False)
     options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
-    return webdriver.Chrome(options=options)
+    driver = webdriver.Chrome(options=options)
+    driver.set_window_size(3840, 2160) # บังคับหน้าต่างอีกรอบกันเหนียว
+    return driver
 
 # ==========================================
 # Main scraper
@@ -251,70 +254,103 @@ def scrape_moc_daily_prices():
                         time.sleep(2)
                         soup = BeautifulSoup(driver.page_source, 'html.parser')
 
-                    rows = soup.find_all('tr')
-                    if len(rows) < 2:
+                    # ==========================================
+                    # 🚀 ระบบดึงข้อมูลขั้นสูง (ดึงลึกทะลุ HTML)
+                    # ==========================================
+                    data_rows_text = []
+                    used_js_api = False
+                    
+                    # 1. ลองใช้ JavaScript ล้วงข้อมูลหลังบ้านของ DataTables ออกมาตรงๆ
+                    js_data = driver.execute_script("""
+                        try {
+                            var tables = $.fn.dataTable.tables(true);
+                            if(tables.length > 0) {
+                                return $(tables[0]).DataTable().data().toArray();
+                            }
+                        } catch(e) {}
+                        return null;
+                    """)
+
+                    if js_data and len(js_data) > 0:
+                        used_js_api = True
+                        for row_data in js_data:
+                            if isinstance(row_data, dict):
+                                cols = list(row_data.values())
+                            else:
+                                cols = row_data
+                            # ลอก HTML tags ออกให้เหลือแต่ข้อความล้วนๆ
+                            cols_text = [BeautifulSoup(str(c), 'html.parser').get_text(" ", strip=True) for c in cols]
+                            data_rows_text.append(cols_text)
+                    else:
+                        # 2. ถ้าดึงหลังบ้านไม่ได้ ค่อยกลับมาดึงแบบเดิมด้วย BeautifulSoup
+                        rows = soup.find_all('tr')
+                        for row in rows:
+                            cols = row.find_all(['td', 'th'])
+                            if not cols: continue
+                            cols_text = [c.get_text(" ", strip=True) for c in cols]
+                            data_rows_text.append(cols_text)
+
+                    if len(data_rows_text) < 2:
                         continue
 
                     page_number = 1
                     previous_first_item = None
 
                     while True:
-                        if page_number > 1:
+                        # ถ้าระบบใช้ JS API มันดึงข้อมูลรวดเดียวทุกหน้าแล้ว ไม่ต้องวนลูปกด Next อีก
+                        if page_number > 1 and used_js_api:
+                            break
+                            
+                        if page_number > 1 and not used_js_api:
                             time.sleep(4)
                             soup = BeautifulSoup(driver.page_source, 'html.parser')
                             rows = soup.find_all('tr')
+                            data_rows_text = []
+                            for row in rows:
+                                cols = row.find_all(['td', 'th'])
+                                if not cols: continue
+                                cols_text = [c.get_text(" ", strip=True) for c in cols]
+                                data_rows_text.append(cols_text)
 
                         current_first_item = None
                         has_data = False
 
-                        for row in rows:
-                            cols = row.find_all(['td', 'th'])
-                            if not cols:
-                                continue
-                            
-                            # ตรวจสอบข้ามหัวตาราง
-                            first_col_text = cols[0].get_text(strip=True)
-                            if "ลำดับ" in first_col_text or "รายการ" in first_col_text:
+                        for cols_text in data_rows_text:
+                            if not cols_text:
                                 continue
                                 
+                            first_col_text = cols_text[0]
+                            if "ลำดับ" in first_col_text or "รายการ" in first_col_text:
+                                continue
+
+                            is_valid = False
                             item_name = ""
                             min_price = max_price = avg_price = 0.0
                             unit_text = "หน่วย"
-                            is_valid = False
 
-                            # 🟢 แผน A: โค้ดหลักเดิมของคุณ (ดึงตามคอลัมน์)
-                            if len(cols) >= 3:
-                                item_name = cols[1].get_text(" ", strip=True)
-                                range_text = cols[2].get_text(strip=True)
-                                avg_price_text = cols[3].get_text(strip=True) if len(cols) > 3 else range_text
-                                unit_text = cols[4].get_text(strip=True) if len(cols) > 4 else "หน่วย"
-
-                                avg_match = re.search(r'\d+\.?\d*', avg_price_text.replace(',', ''))
-
-                                if item_name and avg_match and "รายการ" not in item_name:
-                                    item_name = NAME_RENAME.get(item_name, item_name)
-                                    avg_price = float(avg_match.group())
-                                    range_numbers = re.findall(r'\d+\.?\d*', range_text.replace(',', ''))
+                            # --- Plan A: โค้ดคลาสสิกของคุณ (ทำงานได้ดีที่สุด) ---
+                            offset = 1 if len(cols_text) >= 5 and not first_col_text.isdigit() else 0
+                            
+                            if len(cols_text) >= 3 + offset:
+                                raw_name = cols_text[1 + offset]
+                                if "รายการ" not in raw_name:
+                                    item_name = NAME_RENAME.get(raw_name, raw_name)
+                                    range_text = cols_text[2 + offset]
+                                    avg_price_text = cols_text[3 + offset] if len(cols_text) > 3 + offset else range_text
                                     
-                                    if len(range_numbers) >= 2:
-                                        min_price = float(range_numbers[0])
-                                        max_price = float(range_numbers[1])
-                                    elif len(range_numbers) == 1:
-                                        min_price = float(range_numbers[0])
-                                        max_price = float(range_numbers[0])
-                                    else:
-                                        min_price = avg_price
-                                        max_price = avg_price
-                                    
-                                    is_valid = True
+                                    avg_match = re.search(r'\d+\.?\d*', avg_price_text.replace(',', ''))
+                                    if item_name and avg_match:
+                                        avg_price = float(avg_match.group())
+                                        range_numbers = re.findall(r'\d+\.?\d*', range_text.replace(',', ''))
+                                        min_price = float(range_numbers[0]) if range_numbers else avg_price
+                                        max_price = float(range_numbers[1]) if len(range_numbers) >= 2 else avg_price
+                                        unit_text = cols_text[4 + offset] if len(cols_text) > 4 + offset else "หน่วย"
+                                        is_valid = True
 
-                            # 🟢 แผน B: ถ้าระบบเจอช่องไม่พอ (len < 3) หรือชื่อสินค้าเป็นตัวเลข ให้สับด้วย Text
-                            if not is_valid and len(cols) > 0:
-                                row_text = row.get_text(" ", strip=True)
-                                # ตัดปุ่มบวกและตัวเลขลำดับข้างหน้าออก
+                            # --- Plan B: เผื่อเจอ HTML พัง จะอ่านข้อความดิบทั้งบรรทัด (Regex Fallback) ---
+                            if not is_valid and len(cols_text) > 0:
+                                row_text = " ".join(cols_text)
                                 row_text = re.sub(r'^\+?\s*\d+\s+', '', row_text).strip()
-                                
-                                # หาราคาต่ำสุด-สูงสุด
                                 price_match = re.search(r'(\d{1,3}(?:,\d{3})*\.\d{2})\s*-\s*(\d{1,3}(?:,\d{3})*\.\d{2})', row_text)
                                 
                                 if price_match:
@@ -326,17 +362,15 @@ def scrape_moc_daily_prices():
                                         
                                         remainder = row_text[price_match.end():].strip()
                                         avg_price_match = re.search(r'\d{1,3}(?:,\d{3})*\.\d{2}', remainder)
-                                        
                                         if avg_price_match:
                                             avg_price = float(avg_price_match.group().replace(',', ''))
                                             unit_text = remainder[avg_price_match.end():].strip() or "หน่วย"
                                         else:
                                             avg_price = min_price
                                             unit_text = remainder.strip() or "หน่วย"
-                                            
                                         is_valid = True
-                                        
-                            # เซฟข้อมูลถ้ารายการใช้ได้
+
+                            # บันทึกข้อมูล
                             if is_valid:
                                 if not current_first_item:
                                     current_first_item = item_name
@@ -349,13 +383,9 @@ def scrape_moc_daily_prices():
                                 item_id_base = item_mapping[item_name]
                                 item_id = f"{item_id_base}_r" if table_type == "ราคาปลีก" else item_id_base
                                 all_scraped_items[item_id] = {
-                                    "name": item_name,
-                                    "price": avg_price,
-                                    "min_price": min_price,
-                                    "max_price": max_price,
-                                    "unit": unit_text,
-                                    "category": category_name,
-                                    "type": table_type
+                                    "name": item_name, "price": avg_price,
+                                    "min_price": min_price, "max_price": max_price,
+                                    "unit": unit_text, "category": category_name, "type": table_type
                                 }
                                 found_in_category = True
                                 has_data = True
@@ -365,32 +395,33 @@ def scrape_moc_daily_prices():
 
                         previous_first_item = current_first_item
 
-                        try:
-                            next_btns = driver.find_elements(
-                                By.XPATH,
-                                "//a[contains(text(), 'Next') or contains(text(), 'ถัดไป') or contains(@aria-label, 'Next')]"
-                            )
-                            valid_btn_found = False
-                            for btn in next_btns:
-                                try:
-                                    parent_class = btn.find_element(By.XPATH, "..").get_attribute("class") or ""
-                                    btn_class = btn.get_attribute("class") or ""
-                                    if (
-                                        "disabled" not in parent_class.lower()
-                                        and "disabled" not in btn_class.lower()
-                                        and btn.is_displayed()
-                                    ):
-                                        driver.execute_script("arguments[0].click();", btn)
-                                        page_number += 1
-                                        time.sleep(3)
-                                        valid_btn_found = True
-                                        break
-                                except Exception:
-                                    continue
-                            if not valid_btn_found:
+                        if not used_js_api:
+                            try:
+                                next_btns = driver.find_elements(
+                                    By.XPATH,
+                                    "//a[contains(text(), 'Next') or contains(text(), 'ถัดไป') or contains(@aria-label, 'Next')]"
+                                )
+                                valid_btn_found = False
+                                for btn in next_btns:
+                                    try:
+                                        parent_class = btn.find_element(By.XPATH, "..").get_attribute("class") or ""
+                                        btn_class = btn.get_attribute("class") or ""
+                                        if (
+                                            "disabled" not in parent_class.lower()
+                                            and "disabled" not in btn_class.lower()
+                                            and btn.is_displayed()
+                                        ):
+                                            driver.execute_script("arguments[0].click();", btn)
+                                            page_number += 1
+                                            time.sleep(3)
+                                            valid_btn_found = True
+                                            break
+                                    except Exception:
+                                        continue
+                                if not valid_btn_found:
+                                    break
+                            except Exception:
                                 break
-                        except Exception:
-                            break
 
                 except Exception:
                     continue
@@ -437,87 +468,165 @@ def scrape_moc_daily_prices():
                                 time.sleep(2)
                                 soup = BeautifulSoup(driver.page_source, 'html.parser')
 
-                            rows = soup.find_all('tr')
-                            if len(rows) < 2:
+                            data_rows_text = []
+                            used_js_api = False
+                            
+                            js_data = driver.execute_script("""
+                                try {
+                                    var tables = $.fn.dataTable.tables(true);
+                                    if(tables.length > 0) {
+                                        return $(tables[0]).DataTable().data().toArray();
+                                    }
+                                } catch(e) {}
+                                return null;
+                            """)
+
+                            if js_data and len(js_data) > 0:
+                                used_js_api = True
+                                for row_data in js_data:
+                                    if isinstance(row_data, dict):
+                                        cols = list(row_data.values())
+                                    else:
+                                        cols = row_data
+                                    cols_text = [BeautifulSoup(str(c), 'html.parser').get_text(" ", strip=True) for c in cols]
+                                    data_rows_text.append(cols_text)
+                            else:
+                                rows = soup.find_all('tr')
+                                for row in rows:
+                                    cols = row.find_all(['td', 'th'])
+                                    if not cols: continue
+                                    cols_text = [c.get_text(" ", strip=True) for c in cols]
+                                    data_rows_text.append(cols_text)
+
+                            if len(data_rows_text) < 2:
                                 continue
 
-                            for row in rows:
-                                cols = row.find_all(['td', 'th'])
-                                if not cols:
-                                    continue
-                                
-                                first_col_text = cols[0].get_text(strip=True)
-                                if "ลำดับ" in first_col_text or "รายการ" in first_col_text:
-                                    continue
+                            page_number = 1
+                            previous_first_item = None
 
-                                is_valid = False
-                                item_name = ""
-                                min_price = max_price = avg_price = 0.0
-                                unit_text = "หน่วย"
-
-                                # 🟢 แผน A: โค้ดหลักเดิม
-                                if len(cols) >= 3:
-                                    item_name = cols[1].get_text(" ", strip=True)
-                                    range_text = cols[2].get_text(strip=True)
-                                    avg_price_text = cols[3].get_text(strip=True) if len(cols) > 3 else range_text
-                                    unit_text = cols[4].get_text(strip=True) if len(cols) > 4 else "หน่วย"
-
-                                    avg_match = re.search(r'\d+\.?\d*', avg_price_text.replace(',', ''))
-                                    if item_name and avg_match and "รายการ" not in item_name:
-                                        item_name = NAME_RENAME.get(item_name, item_name)
-                                        avg_price = float(avg_match.group())
-                                        range_numbers = re.findall(r'\d+\.?\d*', range_text.replace(',', ''))
-                                        
-                                        if len(range_numbers) >= 2:
-                                            min_price = float(range_numbers[0])
-                                            max_price = float(range_numbers[1])
-                                        elif len(range_numbers) == 1:
-                                            min_price = float(range_numbers[0])
-                                            max_price = float(range_numbers[0])
-                                        else:
-                                            min_price = avg_price
-                                            max_price = avg_price
-                                            
-                                        is_valid = True
-
-                                # 🟢 แผน B: ใช้ข้อความทั้งบรรทัด (ถ้าคอลัมน์มาไม่ครบ)
-                                if not is_valid and len(cols) > 0:
-                                    row_text = row.get_text(" ", strip=True)
-                                    row_text = re.sub(r'^\+?\s*\d+\s+', '', row_text).strip()
-                                    price_match = re.search(r'(\d{1,3}(?:,\d{3})*\.\d{2})\s*-\s*(\d{1,3}(?:,\d{3})*\.\d{2})', row_text)
+                            while True:
+                                if page_number > 1 and used_js_api:
+                                    break
                                     
-                                    if price_match:
-                                        raw_name = row_text[:price_match.start()].strip()
-                                        if raw_name and "รายการ" not in raw_name:
+                                if page_number > 1 and not used_js_api:
+                                    time.sleep(4)
+                                    soup = BeautifulSoup(driver.page_source, 'html.parser')
+                                    rows = soup.find_all('tr')
+                                    data_rows_text = []
+                                    for row in rows:
+                                        cols = row.find_all(['td', 'th'])
+                                        if not cols: continue
+                                        cols_text = [c.get_text(" ", strip=True) for c in cols]
+                                        data_rows_text.append(cols_text)
+
+                                current_first_item = None
+                                has_data = False
+
+                                for cols_text in data_rows_text:
+                                    if not cols_text:
+                                        continue
+                                        
+                                    first_col_text = cols_text[0]
+                                    if "ลำดับ" in first_col_text or "รายการ" in first_col_text:
+                                        continue
+
+                                    is_valid = False
+                                    item_name = ""
+                                    min_price = max_price = avg_price = 0.0
+                                    unit_text = "หน่วย"
+
+                                    offset = 1 if len(cols_text) >= 5 and not first_col_text.isdigit() else 0
+                                    
+                                    if len(cols_text) >= 3 + offset:
+                                        raw_name = cols_text[1 + offset]
+                                        if "รายการ" not in raw_name:
                                             item_name = NAME_RENAME.get(raw_name, raw_name)
-                                            min_price = float(price_match.group(1).replace(',', ''))
-                                            max_price = float(price_match.group(2).replace(',', ''))
+                                            range_text = cols_text[2 + offset]
+                                            avg_price_text = cols_text[3 + offset] if len(cols_text) > 3 + offset else range_text
                                             
-                                            remainder = row_text[price_match.end():].strip()
-                                            avg_price_match = re.search(r'\d{1,3}(?:,\d{3})*\.\d{2}', remainder)
-                                            if avg_price_match:
-                                                avg_price = float(avg_price_match.group().replace(',', ''))
-                                                unit_text = remainder[avg_price_match.end():].strip() or "หน่วย"
-                                            else:
-                                                avg_price = min_price
-                                                unit_text = remainder.strip() or "หน่วย"
-                                            is_valid = True
+                                            avg_match = re.search(r'\d+\.?\d*', avg_price_text.replace(',', ''))
+                                            if item_name and avg_match:
+                                                avg_price = float(avg_match.group())
+                                                range_numbers = re.findall(r'\d+\.?\d*', range_text.replace(',', ''))
+                                                min_price = float(range_numbers[0]) if range_numbers else avg_price
+                                                max_price = float(range_numbers[1]) if len(range_numbers) >= 2 else avg_price
+                                                unit_text = cols_text[4 + offset] if len(cols_text) > 4 + offset else "หน่วย"
+                                                is_valid = True
 
-                                if is_valid:
-                                    if item_name not in item_mapping:
-                                        prefix = CATEGORY_PREFIX.get(category_name, "x")
-                                        count_in_cat = sum(1 for v in item_mapping.values() if v.startswith(prefix))
-                                        item_mapping[item_name] = f"{prefix}{count_in_cat + 1}"
+                                    if not is_valid and len(cols_text) > 0:
+                                        row_text = " ".join(cols_text)
+                                        row_text = re.sub(r'^\+?\s*\d+\s+', '', row_text).strip()
+                                        price_match = re.search(r'(\d{1,3}(?:,\d{3})*\.\d{2})\s*-\s*(\d{1,3}(?:,\d{3})*\.\d{2})', row_text)
+                                        
+                                        if price_match:
+                                            raw_name = row_text[:price_match.start()].strip()
+                                            if raw_name and "รายการ" not in raw_name:
+                                                item_name = NAME_RENAME.get(raw_name, raw_name)
+                                                min_price = float(price_match.group(1).replace(',', ''))
+                                                max_price = float(price_match.group(2).replace(',', ''))
+                                                
+                                                remainder = row_text[price_match.end():].strip()
+                                                avg_price_match = re.search(r'\d{1,3}(?:,\d{3})*\.\d{2}', remainder)
+                                                if avg_price_match:
+                                                    avg_price = float(avg_price_match.group().replace(',', ''))
+                                                    unit_text = remainder[avg_price_match.end():].strip() or "หน่วย"
+                                                else:
+                                                    avg_price = min_price
+                                                    unit_text = remainder.strip() or "หน่วย"
+                                                is_valid = True
 
-                                    item_id_base = item_mapping[item_name]
-                                    item_id = f"{item_id_base}_r" if table_type == "ราคาปลีก" else item_id_base
-                                    all_scraped_items[item_id] = {
-                                        "name": item_name, "price": avg_price,
-                                        "min_price": min_price, "max_price": max_price,
-                                        "unit": unit_text, "category": category_name, "type": table_type
-                                    }
-                                    found_in_category = True
+                                    if is_valid:
+                                        if not current_first_item:
+                                            current_first_item = item_name
 
+                                        if item_name not in item_mapping:
+                                            prefix = CATEGORY_PREFIX.get(category_name, "x")
+                                            count_in_cat = sum(1 for v in item_mapping.values() if v.startswith(prefix))
+                                            item_mapping[item_name] = f"{prefix}{count_in_cat + 1}"
+
+                                        item_id_base = item_mapping[item_name]
+                                        item_id = f"{item_id_base}_r" if table_type == "ราคาปลีก" else item_id_base
+                                        all_scraped_items[item_id] = {
+                                            "name": item_name, "price": avg_price,
+                                            "min_price": min_price, "max_price": max_price,
+                                            "unit": unit_text, "category": category_name, "type": table_type
+                                        }
+                                        found_in_category = True
+                                        has_data = True
+
+                                if current_first_item == previous_first_item or not has_data:
+                                    break
+
+                                previous_first_item = current_first_item
+
+                                if not used_js_api:
+                                    try:
+                                        next_btns = driver.find_elements(
+                                            By.XPATH,
+                                            "//a[contains(text(), 'Next') or contains(text(), 'ถัดไป') or contains(@aria-label, 'Next')]"
+                                        )
+                                        valid_btn_found = False
+                                        for btn in next_btns:
+                                            try:
+                                                parent_class = btn.find_element(By.XPATH, "..").get_attribute("class") or ""
+                                                btn_class = btn.get_attribute("class") or ""
+                                                if (
+                                                    "disabled" not in parent_class.lower()
+                                                    and "disabled" not in btn_class.lower()
+                                                    and btn.is_displayed()
+                                                ):
+                                                    driver.execute_script("arguments[0].click();", btn)
+                                                    page_number += 1
+                                                    time.sleep(3)
+                                                    valid_btn_found = True
+                                                    break
+                                            except Exception:
+                                                continue
+                                        if not valid_btn_found:
+                                            break
+                                    except Exception:
+                                        break
+                                        
                         except Exception:
                             continue
 
