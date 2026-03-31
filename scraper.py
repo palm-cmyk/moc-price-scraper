@@ -229,6 +229,7 @@ def scrape_moc_daily_prices():
                         wait = 30 if category_name == "พืชน้ำมันและน้ำมันพืช" else 10
                         time.sleep(wait)
 
+                        # ทำลาย DataTables เพื่อกันตารางหด
                         driver.execute_script("try { $('table').DataTable().destroy(); } catch(e) {}")
                         time.sleep(2)
 
@@ -289,25 +290,23 @@ def scrape_moc_daily_prices():
                             elif len(cols) >= 3 and not first_col_text.isdigit() and cols[1].get_text(strip=True).isdigit():
                                 offset = 1
                                 
+                            # 🟢 โค้ด Hybrid: ดึงแบบใหม่ที่แข็งแกร่ง (3 columns + offset)
                             if len(cols) >= 3 + offset:
                                 raw_name = cols[1 + offset].get_text(" ", strip=True)
                                 range_text = cols[2 + offset].get_text(strip=True)
                                 
-                                # 🧹 อาบน้ำให้ข้อความ (คลีนอักขระล่องหนและช่องว่าง)
+                                # ล้างขยะอักขระล่องหน
                                 raw_name = raw_name.replace('\xa0', ' ').replace('\u200b', '')
                                 raw_name = re.sub(r'\s+', ' ', raw_name).strip()
                                 
                                 if not raw_name or "รายการ" in raw_name:
                                     continue
 
-                                # 🟢 เก็บชื่อดั้งเดิมไว้สำหรับค้นหา ID (ซีกซ้าย)
-                                original_name = raw_name   
-                                
-                                # 🟢 แปลงชื่อสำหรับแสดงผลบนแอป (ซีกขวา)
-                                item_name = NAME_RENAME.get(original_name, original_name)
+                                # 🟢 โค้ด Hybrid: เปลี่ยนชื่อปุ๊บ แล้วเอาไปผูก ID ทันที (เหมือนโค้ดเก่าคุณปาล์ม)
+                                item_name = NAME_RENAME.get(raw_name, raw_name)
 
                                 if not current_first_item:
-                                    current_first_item = original_name
+                                    current_first_item = item_name
 
                                 range_numbers = re.findall(r'\d+\.?\d*', range_text.replace(',', ''))
                                 if not range_numbers:
@@ -329,16 +328,15 @@ def scrape_moc_daily_prices():
 
                                 unit_text = cols[4 + offset].get_text(strip=True) if len(cols) > 4 + offset else "หน่วย"
 
-                                # ใช้ชื่อดั้งเดิม (original_name) ในสมุดหน้าเหลืองเสมอ
-                                if original_name not in item_mapping:
+                                # 🟢 โค้ด Hybrid: ใช้ชื่อที่ถูก Rename แล้ว มาเป็น Key ในหน้าเหลือง
+                                if item_name not in item_mapping:
                                     prefix = CATEGORY_PREFIX.get(category_name, "x")
                                     count_in_cat = sum(1 for v in item_mapping.values() if v.startswith(prefix))
-                                    item_mapping[original_name] = f"{prefix}{count_in_cat + 1}"
+                                    item_mapping[item_name] = f"{prefix}{count_in_cat + 1}"
 
-                                item_id_base = item_mapping[original_name]
+                                item_id_base = item_mapping[item_name]
                                 item_id = f"{item_id_base}_r" if table_type == "ราคาปลีก" else item_id_base
                                 
-                                # อัปโหลดชื่อที่ถูกแปลแล้ว (item_name) ขึ้น Firebase
                                 all_scraped_items[item_id] = {
                                     "name": item_name,
                                     "price": avg_price,
@@ -463,17 +461,17 @@ def scrape_moc_daily_prices():
                                     raw_name = cols[1 + offset].get_text(" ", strip=True)
                                     range_text = cols[2 + offset].get_text(strip=True)
                                     
+                                    # ล้างขยะอักขระล่องหน (รอบ Retry)
                                     raw_name = raw_name.replace('\xa0', ' ').replace('\u200b', '')
                                     raw_name = re.sub(r'\s+', ' ', raw_name).strip()
                                     
                                     if not raw_name or "รายการ" in raw_name:
                                         continue
-                                        
-                                    original_name = raw_name   
-                                    item_name = NAME_RENAME.get(original_name, original_name)
+
+                                    item_name = NAME_RENAME.get(raw_name, raw_name)
 
                                     if not current_first_item:
-                                        current_first_item = original_name
+                                        current_first_item = item_name
 
                                     range_numbers = re.findall(r'\d+\.?\d*', range_text.replace(',', ''))
                                     if not range_numbers:
@@ -495,12 +493,12 @@ def scrape_moc_daily_prices():
 
                                     unit_text = cols[4 + offset].get_text(strip=True) if len(cols) > 4 + offset else "หน่วย"
 
-                                    if original_name not in item_mapping:
+                                    if item_name not in item_mapping:
                                         prefix = CATEGORY_PREFIX.get(category_name, "x")
                                         count_in_cat = sum(1 for v in item_mapping.values() if v.startswith(prefix))
-                                        item_mapping[original_name] = f"{prefix}{count_in_cat + 1}"
+                                        item_mapping[item_name] = f"{prefix}{count_in_cat + 1}"
 
-                                    item_id_base = item_mapping[original_name]
+                                    item_id_base = item_mapping[item_name]
                                     item_id = f"{item_id_base}_r" if table_type == "ราคาปลีก" else item_id_base
                                     
                                     all_scraped_items[item_id] = {
@@ -625,7 +623,7 @@ def scrape_moc_daily_prices():
                 "scraped_at": now_utc,
                 "official_update_date": official_update_date or "",
                 "item_count": len(all_scraped_items),
-                "scrape_version": "1.4.0",
+                "scrape_version": "1.5.0_Hybrid",
                 "items": all_scraped_items
             }
 
