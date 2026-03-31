@@ -632,7 +632,13 @@ def scrape_moc_daily_prices():
                         f"หมวดหมู่หายไปทั้งหมด: {missing_cats} — ยกเลิกการอัปโหลด"
                     )
                 print(f"⚠️  หมวดที่ดึงไม่ได้: {missing_cats} — อัปโหลดหมวดที่เหลือต่อไป")
-
+            if today.weekday() == 0:  # 0 = วันจันทร์
+                try:
+                    weekly_ref = db.collection('market_data').document('weekly')
+                    db.collection('market_data').document('weekly').set(market_data)
+                    print(f"✅ อัปเดต market_data/weekly สำเร็จ (วันจันทร์)")
+                except Exception as e:
+                print(f"⚠️ เขียน weekly ล้มเหลว: {e}")
             # ==========================================
             # เตรียม payload และอัปโหลด
             # ==========================================
