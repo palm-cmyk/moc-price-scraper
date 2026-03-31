@@ -118,7 +118,6 @@ NAME_RENAME = {
 
 def normalize_item(item_id: str, item: dict) -> dict:
     result = dict(item)
-    result['name'] = NAME_RENAME.get(result.get('name', ''), result.get('name', ''))
     unit = (item.get('unit') or '').strip()
 
     for pattern, divisor, new_unit in BULK_RULES:
