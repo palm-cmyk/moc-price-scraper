@@ -632,13 +632,7 @@ def scrape_moc_daily_prices():
                         f"หมวดหมู่หายไปทั้งหมด: {missing_cats} — ยกเลิกการอัปโหลด"
                     )
                 print(f"⚠️  หมวดที่ดึงไม่ได้: {missing_cats} — อัปโหลดหมวดที่เหลือต่อไป")
-            if today.weekday() == 0:  # 0 = วันจันทร์
-                try:
-                    weekly_ref = db.collection('market_data').document('weekly')
-                    db.collection('market_data').document('weekly').set(market_data)
-                    print(f"✅ อัปเดต market_data/weekly สำเร็จ (วันจันทร์)")
-                except Exception as e:
-                print(f"⚠️ เขียน weekly ล้มเหลว: {e}")
+
             # ==========================================
             # เตรียม payload และอัปโหลด
             # ==========================================
@@ -652,6 +646,14 @@ def scrape_moc_daily_prices():
                 "scrape_version": "1.5.1_Hybrid",
                 "items": all_scraped_items
             }
+            
+            # บล็อกอัปเดต Weekly (วันจันทร์) ย้ายมาตรงนี้ครับ
+            if today.weekday() == 0:  # 0 = วันจันทร์
+                try:
+                    db.collection('market_data').document('weekly').set(market_data)
+                    print(f"✅ อัปเดต market_data/weekly สำเร็จ (วันจันทร์)")
+                except Exception as e:
+                    print(f"⚠️ เขียน weekly ล้มเหลว: {e}")
 
             with open(CURRENT_PRICE_FILE, 'w', encoding='utf-8') as f:
                 json.dump({**market_data, "scraped_at": now_utc.isoformat()}, f, ensure_ascii=False, indent=4)
