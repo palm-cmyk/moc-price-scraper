@@ -204,13 +204,13 @@ def scrape_moc_daily_prices():
 
             try:
                 driver.get(url)
-                time.sleep(5)
+                time.sleep(8)
                 driver.refresh()
             except Exception as e:
                 print(f"โหลดหน้าเว็บไม่สำเร็จ: {e}")
                 continue
 
-            wait_time = 40 if category_name == "พืชน้ำมันและน้ำมันพืช" else 10
+            wait_time = 30 if category_name == "พืชน้ำมันและน้ำมันพืช" else 10
             time.sleep(wait_time)
 
             iframes = driver.find_elements(By.TAG_NAME, "iframe")
@@ -226,7 +226,7 @@ def scrape_moc_daily_prices():
                         time.sleep(2)
                         driver.switch_to.frame(frame)
                         iframe_counter += 1
-                        wait = 30 if category_name == "พืชน้ำมันและน้ำมันพืช" else 10
+                        wait = 20 if category_name == "พืชน้ำมันและน้ำมันพืช" else 10
                         time.sleep(wait)
 
                         driver.execute_script("""
