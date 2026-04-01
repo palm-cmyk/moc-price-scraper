@@ -676,6 +676,12 @@ def scrape_moc_daily_prices():
             try:
                 doc_ref = db.collection('market_data').document('latest')
                 doc_ref.set(market_data)
+
+                if datetime.now().weekday() == 0:  # วันจันทร์
+                    weekly_ref = db.collection('market_data').document('weekly')
+                    weekly_ref.set(market_data)
+                    print("อัปโหลด weekly สำเร็จ!")
+                
                 print(f"อัปโหลดขึ้น Firebase สำเร็จ! {len(all_scraped_items)} รายการ | scraped_at: {now_utc.strftime('%H:%M UTC')}")
             except Exception as firebase_e:
                 print(f"อัปโหลด Firebase ล้มเหลว: {firebase_e}")
