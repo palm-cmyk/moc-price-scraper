@@ -204,13 +204,13 @@ def scrape_moc_daily_prices():
 
             try:
                 driver.get(url)
-                time.sleep(5)
+                time.sleep(10)
                 driver.refresh()
             except Exception as e:
                 print(f"โหลดหน้าเว็บไม่สำเร็จ: {e}")
                 continue
 
-            wait_time = 40 if category_name == "พืชน้ำมันและน้ำมันพืช" else 10
+            wait_time = 20 if category_name == "พืชน้ำมันและน้ำมันพืช" else 10
             time.sleep(wait_time)
 
             iframes = driver.find_elements(By.TAG_NAME, "iframe")
@@ -648,7 +648,7 @@ def scrape_moc_daily_prices():
             }
             
             # บล็อกอัปเดต Weekly (วันจันทร์) ย้ายมาตรงนี้ครับ
-            if today.weekday() == 0:  # 0 = วันจันทร์
+            if today.weekday() == 2:  # 0 = วันจันทร์
                 try:
                     db.collection('market_data').document('weekly').set(market_data)
                     print(f"✅ อัปเดต market_data/weekly สำเร็จ (วันจันทร์)")
