@@ -204,13 +204,13 @@ def scrape_moc_daily_prices():
 
             try:
                 driver.get(url)
-                time.sleep(10)
+                time.sleep(5)
                 driver.refresh()
             except Exception as e:
                 print(f"โหลดหน้าเว็บไม่สำเร็จ: {e}")
                 continue
 
-            wait_time = 20 if category_name == "พืชน้ำมันและน้ำมันพืช" else 10
+            wait_time = 40 if category_name == "พืชน้ำมันและน้ำมันพืช" else 10
             time.sleep(wait_time)
 
             iframes = driver.find_elements(By.TAG_NAME, "iframe")
@@ -229,7 +229,6 @@ def scrape_moc_daily_prices():
                         wait = 30 if category_name == "พืชน้ำมันและน้ำมันพืช" else 10
                         time.sleep(wait)
 
-                        # 🟢 อัปเกรด: สั่งกางรายการทั้งหมดในหน้าเดียว (1000 รายการ) ก่อนทำลายตาราง!
                         driver.execute_script("""
                             try {
                                 var dt = $('table').DataTable();
@@ -238,7 +237,6 @@ def scrape_moc_daily_prices():
                         """)
                         time.sleep(2)
                         
-                        # ทำลาย DataTables เพื่อกันตารางหด
                         driver.execute_script("try { $('table').DataTable().destroy(); } catch(e) {}")
                         time.sleep(2)
 
@@ -563,6 +561,10 @@ def scrape_moc_daily_prices():
                 else "อ้างอิงตามประกาศล่าสุดของกระทรวง"
             )
             timestamp_str = f"{final_date_str} (ซิงค์ขึ้น Cloud เวลา {datetime.now().strftime('%H:%M')})"
+            
+            # เลื่อนตัวแปรเวลาขึ้นมาตรงนี้ เพื่อให้ใส่ใน History ได้
+            now_utc = datetime.now(timezone.utc)
+            scrape_version_str = "1.5.2_Hybrid"
 
             print("กำลังประมวลผลราคาประวัติศาสตร์ (ต้นเดือน/ต้นปี)...")
             today = datetime.now()
@@ -574,8 +576,18 @@ def scrape_moc_daily_prices():
                 doc_ref = history_ref.document(doc_id)
                 doc = doc_ref.get()
                 
+                # เตรียมก้อน Metadata ที่จะใส่เพิ่มลงไป
+                history_metadata = {
+                    "updated_at": timestamp_str,
+                    "scraped_at": now_utc,
+                    "official_update_date": official_update_date or "",
+                    "scrape_version": scrape_version_str
+                }
+                
                 if not doc.exists:
-                    doc_ref.set({"items": current_items})
+                    new_data = {"items": current_items}
+                    new_data.update(history_metadata) # รวม Metadata เข้าไป
+                    doc_ref.set(new_data)
                     print(f"สร้างฐานข้อมูลราคา{period_name}ใหม่เรียบร้อย! ({doc_id})")
                     return current_items
                 else:
@@ -590,8 +602,13 @@ def scrape_moc_daily_prices():
                             needs_update = True
                             
                     if needs_update:
-                        doc_ref.update({"items": raw_history})
+                        update_payload = {"items": raw_history}
+                        update_payload.update(history_metadata) # อัปเดต Metadata ไปด้วยเลยถ้ามีการเพิ่มของใหม่
+                        doc_ref.update(update_payload)
                         print(f"อัปเดตเพิ่มรายการใหม่ลงในฐานข้อมูล{period_name} ({doc_id})")
+                    else:
+                        # ถึงแม้จะไม่มีของใหม่ ก็ให้อัปเดตเวลาล่าสุดไว้ว่าบอทเพิ่งเข้ามาเช็ค
+                        doc_ref.update(history_metadata)
                         
                     return history_data
 
@@ -636,19 +653,16 @@ def scrape_moc_daily_prices():
             # ==========================================
             # เตรียม payload และอัปโหลด
             # ==========================================
-            now_utc = datetime.now(timezone.utc)
-
             market_data = {
                 "updated_at": timestamp_str,
                 "scraped_at": now_utc,
                 "official_update_date": official_update_date or "",
                 "item_count": len(all_scraped_items),
-                "scrape_version": "1.5.1_Hybrid",
+                "scrape_version": scrape_version_str,
                 "items": all_scraped_items
             }
-            
-            # บล็อกอัปเดต Weekly (วันจันทร์) ย้ายมาตรงนี้ครับ
-            if today.weekday() == 2:  # 0 = วันจันทร์
+
+            if today.weekday() == 0:  # 0 = วันจันทร์
                 try:
                     db.collection('market_data').document('weekly').set(market_data)
                     print(f"✅ อัปเดต market_data/weekly สำเร็จ (วันจันทร์)")
